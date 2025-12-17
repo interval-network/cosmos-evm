@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 
+	gethmetrics "github.com/ethereum/go-ethereum/metrics"
 	ethmetricsexp "github.com/ethereum/go-ethereum/metrics/exp"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -473,6 +474,7 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 	// Enable metrics if JSONRPC is enabled and --metrics is passed
 	// Flag not added in config to avoid user enabling in config without passing in CLI
 	if config.JSONRPC.Enable && svrCtx.Viper.GetBool(srvflags.JSONRPCEnableMetrics) {
+		gethmetrics.Enable()
 		ethmetricsexp.Setup(config.JSONRPC.MetricsAddress)
 	}
 
