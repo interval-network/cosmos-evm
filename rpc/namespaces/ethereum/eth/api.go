@@ -74,7 +74,7 @@ type EthereumAPI interface {
 	// Returns information on the Ethereum network and internal settings.
 	ProtocolVersion() hexutil.Uint
 	GasPrice() (*hexutil.Big, error)
-	EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rpctypes.BlockNumber) (hexutil.Uint64, error)
+	EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rpctypes.BlockNumber, overrides *json.RawMessage) (hexutil.Uint64, error)
 	FeeHistory(blockCount math.HexOrDecimal64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*rpctypes.FeeHistoryResult, error)
 	MaxPriorityFeePerGas() (*hexutil.Big, error)
 	ChainId() (*hexutil.Big, error)
@@ -322,9 +322,11 @@ func (e *PublicAPI) GasPrice() (*hexutil.Big, error) {
 }
 
 // EstimateGas returns an estimate of gas usage for the given smart contract call.
-func (e *PublicAPI) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rpctypes.BlockNumber) (hexutil.Uint64, error) {
+// overrides is an optional set of state overrides (3rd JSON-RPC param), matching
+// go-ethereum's eth_estimateGas so clients like alto (ERC-4337) can pass them.
+func (e *PublicAPI) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rpctypes.BlockNumber, overrides *json.RawMessage) (hexutil.Uint64, error) {
 	e.logger.Debug("eth_estimateGas")
-	return e.backend.EstimateGas(args, blockNrOptional)
+	return e.backend.EstimateGas(args, blockNrOptional, overrides)
 }
 
 func (e *PublicAPI) FeeHistory(
