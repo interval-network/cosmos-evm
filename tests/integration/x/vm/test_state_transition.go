@@ -1192,7 +1192,7 @@ func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 				stateDB = statedb.New(s.Network.GetContext(), s.Network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
 			}
 
-			res, err := s.Network.App.GetEVMKeeper().ApplyMessageWithConfig(s.Network.GetContext(), stateDB, msg, nil, true, false, config, txConfig, false, tc.overrides)
+			res, err := s.Network.App.GetEVMKeeper().ApplyMessageWithConfig(s.Network.GetContext(), stateDB, msg, nil, true, false, config, txConfig, false, tc.overrides, nil)
 
 			if tc.expErr {
 				s.Require().Error(err)
