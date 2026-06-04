@@ -366,6 +366,12 @@ message QueryTraceCallRequest {
   google.protobuf.Timestamp block_time = 7 [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   // chain_id is the the eip155 chain id parsed from the requested block header
   int64 chain_id = 8;
+  // overrides contains state overrides encoded as json (same format as
+  // eth_call stateOverrides), applied before tracing.
+  bytes overrides = 9;
+  // block_overrides contains block context overrides encoded as json (same
+  // format as eth_call blockOverrides), applied before tracing.
+  bytes block_overrides = 10;
 }
 
 // QueryTraceCallResponse defines TraceCall response

@@ -264,7 +264,7 @@ func (k Keeper) EthCall(c context.Context, req *types.EthCallRequest) (*types.Ms
 
 	// pass false to not commit StateDB
 	stateDB := statedb.New(ctx, &k, txConfig)
-	res, err := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, false, false, cfg, txConfig, false, overrides)
+	res, err := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, false, false, cfg, txConfig, false, overrides, nil)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -297,6 +297,16 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 	err := json.Unmarshal(req.Args, &args)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Optional state overrides, applied to the statedb before each simulation so
+	// the gas estimate reflects them (matches eth_call / go-ethereum eth_estimateGas).
+	var overrides *rpctypes.StateOverride
+	if len(req.Overrides) > 0 {
+		overrides = new(rpctypes.StateOverride)
+		if err := json.Unmarshal(req.Overrides, overrides); err != nil {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid state overrides format: %s", err.Error()))
+		}
 	}
 
 	// Binary search the gas requirement, as it may be higher than the amount used
@@ -405,7 +415,7 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 		}
 		// pass false to not commit StateDB
 		stateDB := statedb.New(tmpCtx, &k, txConfig)
-		rsp, err = k.ApplyMessageWithConfig(tmpCtx, stateDB, *msg, nil, false, false, cfg, txConfig, false, nil)
+		rsp, err = k.ApplyMessageWithConfig(tmpCtx, stateDB, *msg, nil, false, false, cfg, txConfig, false, overrides, nil)
 		if err != nil {
 			if errors.Is(err, core.ErrIntrinsicGas) || errors.Is(err, core.ErrFloorDataGas) {
 				return true, nil, nil // Special case, raise gas limit
@@ -479,6 +489,16 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 	}
 
 	return &types.EstimateGasResponse{Gas: hi}, nil
+}
+
+// traceTxConfig bundles the inputs shared by the trace helpers.
+type traceTxConfig struct {
+	evmConfig      *statedb.EVMConfig
+	txConfig       statedb.TxConfig
+	traceConfig    *types.TraceConfig
+	commit         bool
+	stateOverrides *rpctypes.StateOverride
+	blockOverrides *rpctypes.BlockOverrides
 }
 
 // TraceTx configures a new tracer according to the provided configuration, and
@@ -558,7 +578,7 @@ func (k Keeper) TraceTx(c context.Context, req *types.QueryTraceTxRequest) (*typ
 		// we ignore the error here. this endpoint, ideally, is called internally from the ETH backend, which will call this query
 		// using all previous txs in the trace transaction's block. some of those _could_ be invalid transactions.
 		stateDB := statedb.New(ctx, &k, txConfig)
-		rsp, _ := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil)
+		rsp, _ := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil, nil)
 		if rsp != nil {
 			ctx.GasMeter().ConsumeGas(rsp.GasUsed, "evm predecessor tx")
 			txConfig.LogIndex += uint(len(rsp.Logs))
@@ -571,7 +591,11 @@ func (k Keeper) TraceTx(c context.Context, req *types.QueryTraceTxRequest) (*typ
 		txConfig.TxIndex++
 	}
 
-	result, _, err := k.traceTx(ctx, cfg, txConfig, signer, tx, req.TraceConfig, false)
+	result, _, err := k.traceTx(ctx, signer, tx, traceTxConfig{
+		evmConfig:   cfg,
+		txConfig:    txConfig,
+		traceConfig: req.TraceConfig,
+	})
 	if err != nil {
 		// error will be returned with detail status from traceTx
 		return nil, err
@@ -639,7 +663,12 @@ func (k Keeper) TraceBlock(c context.Context, req *types.QueryTraceBlockRequest)
 		ethTx := tx.AsTransaction()
 		txConfig.TxHash = ethTx.Hash()
 		txConfig.TxIndex = uint(i) //nolint:gosec // G115 // won't exceed uint64
-		traceResult, logIndex, err := k.traceTx(ctx, cfg, txConfig, signer, ethTx, req.TraceConfig, true)
+		traceResult, logIndex, err := k.traceTx(ctx, signer, ethTx, traceTxConfig{
+			evmConfig:   cfg,
+			txConfig:    txConfig,
+			traceConfig: req.TraceConfig,
+			commit:      true,
+		})
 		if err != nil {
 			result.Error = err.Error()
 		} else {
@@ -717,8 +746,32 @@ func (k Keeper) TraceCall(c context.Context, req *types.QueryTraceCallRequest) (
 	}
 	msg := args.ToMessage(baseFee, true, true)
 
+	// parse geth-compatible state overrides (debug_traceCall stateOverrides)
+	var stateOverrides *rpctypes.StateOverride
+	if len(req.Overrides) > 0 {
+		stateOverrides = new(rpctypes.StateOverride)
+		if err = json.Unmarshal(req.Overrides, stateOverrides); err != nil {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid state overrides format: %s", err.Error()))
+		}
+	}
+
+	// parse geth-compatible block overrides (debug_traceCall blockOverrides)
+	var blockOverrides *rpctypes.BlockOverrides
+	if len(req.BlockOverrides) > 0 {
+		blockOverrides = new(rpctypes.BlockOverrides)
+		if err = json.Unmarshal(req.BlockOverrides, blockOverrides); err != nil {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid block overrides format: %s", err.Error()))
+		}
+	}
+
 	// trace call
-	result, _, err := k.traceTxWithMsg(ctx, cfg, txConfig, msg, req.GetTraceConfig(), false)
+	result, _, err := k.traceTxWithMsg(ctx, msg, traceTxConfig{
+		evmConfig:      cfg,
+		txConfig:       txConfig,
+		traceConfig:    req.GetTraceConfig(),
+		stateOverrides: stateOverrides,
+		blockOverrides: blockOverrides,
+	})
 	if err != nil {
 		// error will be returned with detail status from traceTx
 		return nil, err
@@ -737,30 +790,29 @@ func (k Keeper) TraceCall(c context.Context, req *types.QueryTraceCallRequest) (
 // traceTx do trace on one transaction, it returns a tuple: (traceResult, nextLogIndex, error).
 func (k *Keeper) traceTx(
 	ctx sdk.Context,
-	cfg *statedb.EVMConfig,
-	txConfig statedb.TxConfig,
 	signer ethtypes.Signer,
 	tx *ethtypes.Transaction,
-	traceConfig *types.TraceConfig,
-	commitMessage bool,
+	config traceTxConfig,
 ) (*any, uint, error) {
-	msg, err := core.TransactionToMessage(tx, signer, cfg.BaseFee)
+	msg, err := core.TransactionToMessage(tx, signer, config.evmConfig.BaseFee)
 	if err != nil {
 		return nil, 0, status.Error(codes.Internal, err.Error())
 	}
 
-	return k.traceTxWithMsg(ctx, cfg, txConfig, msg, traceConfig, commitMessage)
+	return k.traceTxWithMsg(ctx, msg, config)
 }
 
 // traceTxWithMsg do trace on one Ethereum message, it returns a tuple: (traceResult, nextLogIndex, error).
 func (k *Keeper) traceTxWithMsg(
 	ctx sdk.Context,
-	cfg *statedb.EVMConfig,
-	txConfig statedb.TxConfig,
 	msg *core.Message,
-	traceConfig *types.TraceConfig,
-	commitMessage bool,
+	config traceTxConfig,
 ) (*interface{}, uint, error) {
+	cfg := config.evmConfig
+	txConfig := config.txConfig
+	traceConfig := config.traceConfig
+	commitMessage := config.commit
+
 	// Assemble the structured logger or the JavaScript tracer
 	var (
 		tracer           *tracers.Tracer
@@ -837,7 +889,7 @@ func (k *Keeper) traceTxWithMsg(
 	// Build EVM execution context
 	ctx = buildTraceCtx(ctx, msg.GasLimit)
 	stateDB := statedb.New(ctx, k, txConfig)
-	res, err := k.ApplyMessageWithConfig(ctx, stateDB, *msg, tracer.Hooks, commitMessage, false, cfg, txConfig, false, nil)
+	res, err := k.ApplyMessageWithConfig(ctx, stateDB, *msg, tracer.Hooks, commitMessage, false, cfg, txConfig, false, config.stateOverrides, config.blockOverrides)
 	if err != nil {
 		return nil, 0, status.Error(codes.Internal, err.Error())
 	}

@@ -189,3 +189,65 @@ type TraceConfig struct {
 	evmtypes.TraceConfig
 	TracerConfig json.RawMessage `json:"tracerConfig"`
 }
+
+// TraceCallConfig extends TraceConfig with state and block overrides for
+// debug_traceCall (geth-compatible). Kept scoped to call tracing so
+// debug_traceTransaction / debug_traceBlock* stay on the plain TraceConfig.
+type TraceCallConfig struct {
+	TraceConfig
+	StateOverrides json.RawMessage `json:"stateOverrides"`
+	BlockOverrides json.RawMessage `json:"blockOverrides"`
+}
+
+// BlockOverrides is a set of header fields to override during tracing. Mirrors
+// go-ethereum's internal ethapi/override.BlockOverrides (which we can't import).
+type BlockOverrides struct {
+	Number        *hexutil.Big
+	Difficulty    *hexutil.Big // no-op post-merge
+	Time          *hexutil.Uint64
+	GasLimit      *hexutil.Uint64
+	FeeRecipient  *common.Address
+	PrevRandao    *common.Hash
+	BaseFeePerGas *hexutil.Big
+	BlobBaseFee   *hexutil.Big
+	BeaconRoot    *common.Hash
+	Withdrawals   *ethtypes.Withdrawals
+}
+
+// Apply writes the overridden fields into the given block context.
+func (o *BlockOverrides) Apply(blockCtx *vm.BlockContext) error {
+	if o == nil {
+		return nil
+	}
+	if o.BeaconRoot != nil {
+		return fmt.Errorf(`block override "beaconRoot" is not supported for this RPC method`)
+	}
+	if o.Withdrawals != nil {
+		return fmt.Errorf(`block override "withdrawals" is not supported for this RPC method`)
+	}
+	if o.Number != nil {
+		blockCtx.BlockNumber = o.Number.ToInt()
+	}
+	if o.Difficulty != nil {
+		blockCtx.Difficulty = o.Difficulty.ToInt()
+	}
+	if o.Time != nil {
+		blockCtx.Time = uint64(*o.Time)
+	}
+	if o.GasLimit != nil {
+		blockCtx.GasLimit = uint64(*o.GasLimit)
+	}
+	if o.FeeRecipient != nil {
+		blockCtx.Coinbase = *o.FeeRecipient
+	}
+	if o.PrevRandao != nil {
+		blockCtx.Random = o.PrevRandao
+	}
+	if o.BaseFeePerGas != nil {
+		blockCtx.BaseFee = o.BaseFeePerGas.ToInt()
+	}
+	if o.BlobBaseFee != nil {
+		blockCtx.BlobBaseFee = o.BlobBaseFee.ToInt()
+	}
+	return nil
+}

@@ -215,7 +215,7 @@ func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*t
 
 	// pass true to commit the StateDB
 	stateDB := statedb.New(tmpCtx, k, txConfig)
-	res, err := k.ApplyMessageWithConfig(tmpCtx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil)
+	res, err := k.ApplyMessageWithConfig(tmpCtx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil, nil)
 	if err != nil {
 		// when a transaction contains multiple msg, as long as one of the msg fails
 		// all gas will be deducted. so is not msg.Gas()
@@ -344,7 +344,7 @@ func (k *Keeper) ApplyMessage(ctx sdk.Context, stateDB *statedb.StateDB, msg cor
 	}
 
 	txConfig := statedb.NewEmptyTxConfig()
-	return k.ApplyMessageWithConfig(ctx, stateDB, msg, tracer, commit, callFromPrecompile, cfg, txConfig, internal, nil)
+	return k.ApplyMessageWithConfig(ctx, stateDB, msg, tracer, commit, callFromPrecompile, cfg, txConfig, internal, nil, nil)
 }
 
 // ApplyMessageWithConfig computes the new state by applying the given message against the existing state.
@@ -385,7 +385,7 @@ func (k *Keeper) ApplyMessage(ctx sdk.Context, stateDB *statedb.StateDB, msg cor
 // # Commit parameter
 //
 // If commit is true, the `StateDB` will be committed or flushed (if called from within a precompile), otherwise discarded.
-func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateDB, msg core.Message, tracer *tracing.Hooks, commit bool, callFromPrecompile bool, cfg *statedb.EVMConfig, txConfig statedb.TxConfig, internal bool, overrides *rpctypes.StateOverride) (*types.MsgEthereumTxResponse, error) {
+func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateDB, msg core.Message, tracer *tracing.Hooks, commit bool, callFromPrecompile bool, cfg *statedb.EVMConfig, txConfig statedb.TxConfig, internal bool, overrides *rpctypes.StateOverride, blockOverrides *rpctypes.BlockOverrides) (*types.MsgEthereumTxResponse, error) {
 	var (
 		ret   []byte // return bytes from evm execution
 		vmErr error  // vm errors do not effect consensus and are therefore not assigned to err
@@ -395,6 +395,11 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 	}
 	ethCfg := types.GetEthChainConfig()
 	evm := k.NewEVMWithOverridePrecompiles(ctx, msg, cfg, tracer, stateDB, overrides == nil)
+	// Apply block context overrides (debug_traceCall blockOverrides) before any
+	// rules/precompiles are derived from the block number/time.
+	if err := blockOverrides.Apply(&evm.Context); err != nil {
+		return nil, errorsmod.Wrap(err, "failed to apply block override")
+	}
 	// Gas limit suffices for the floor data cost (EIP-7623)
 	rules := ethCfg.Rules(evm.Context.BlockNumber, true, evm.Context.Time)
 	if overrides != nil {

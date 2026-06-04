@@ -216,7 +216,7 @@ func (s *TestSuite) TestTraceCall() {
 		registerMock  func()
 		args          evmtypes.TransactionArgs
 		blockNrOrHash rpctypes.BlockNumberOrHash
-		config        *rpctypes.TraceConfig
+		config        *rpctypes.TraceCallConfig
 		expResult     interface{}
 		expPass       bool
 	}{
@@ -241,7 +241,7 @@ func (s *TestSuite) TestTraceCall() {
 					return &bn
 				}(),
 			},
-			&rpctypes.TraceConfig{},
+			&rpctypes.TraceCallConfig{},
 			map[string]interface{}{"test": "trace_call"},
 			true,
 		},
@@ -268,7 +268,7 @@ func (s *TestSuite) TestTraceCall() {
 					return &h
 				}(),
 			},
-			&rpctypes.TraceConfig{},
+			&rpctypes.TraceCallConfig{},
 			map[string]interface{}{"test": "trace_call"},
 			true,
 		},
@@ -293,9 +293,11 @@ func (s *TestSuite) TestTraceCall() {
 					return &bn
 				}(),
 			},
-			&rpctypes.TraceConfig{
-				TraceConfig: evmtypes.TraceConfig{
-					Tracer: "callTracer",
+			&rpctypes.TraceCallConfig{
+				TraceConfig: rpctypes.TraceConfig{
+					TraceConfig: evmtypes.TraceConfig{
+						Tracer: "callTracer",
+					},
 				},
 			},
 			map[string]interface{}{"type": "CALL"},
